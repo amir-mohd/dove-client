@@ -1,32 +1,62 @@
 package com.tothenew.doveclient
 
-import com.jcraft.jsch.Channel
-import com.jcraft.jsch.ChannelExec
-import com.jcraft.jsch.JSch
-import com.jcraft.jsch.Session
-import com.jcraft.jsch.UserInfo
-import java.io.*
+import com.jcraft.jsch.*
 import grails.transaction.Transactional
 
 @Transactional
 class FileUploadService {
-    def uploadFileFromWindowsOSToSSHServer(String sourceFilePath, String destinationFilePath) {
-        String file = sourceFilePath
-        println(sourceFilePath + " " + destinationFilePath)
-        String serverAddress = "elemental@192.168.4.10"
-        String passwd = "elemental"
-        String command = "cmd.exe /c start pscp.exe -pw " + passwd + " -p " + file + " " + serverAddress + ":" + destinationFilePath;
-        Process p = Runtime.getRuntime().exec(command);
+
+
+    def grailsApplication
+    String serverURL
+
+    def notifyToServer(Long requestID, String msg) {
+        serverURL = grailsApplication.config.dove.server.url
+        log.info(new URL(serverURL + "?requestID=${requestID}&msg=${msg}").text)
     }
+
+    def updateQueueStatus(Boolean isInProcess, Long requestID) {
+        if (isInProcess) {
+            notifyToServer(requestID, "success")
+        } else {
+            notifyToServer(requestID, "failed")
+        }
+    }
+
+    Boolean uploadFileFromWindowsOSToSSHServer(String sourceFilePath, String destinationFilePath, Long requestID) {
+        Boolean isInProcess = false
+        File logFile = new File("C:\\UploadToElemental\\log.txt")
+        serverURL = grailsApplication.config.dove.server.url
+        String file = DoveClientConstants.WINDOWS_DIR_PATH + "\\" + sourceFilePath
+        String elementalAddress = grailsApplication.config.dove.elemental.address
+        String passwd = "elemental"
+        String[] command = ["cmd.exe", "/C", "echo y | pscp.exe -pw " + passwd + " -p " + file + " " + elementalAddress + ":" + destinationFilePath];
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        BufferedReader perr = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+        BufferedReader pout = new BufferedReader(new InputStreamReader(p.getInputStream()));
+
+        for (String s = pout.readLine(); s != null; s = pout.readLine()) {
+            isInProcess = true
+            log.info("" + s + "\n");
+        }
+        for (String s = perr.readLine(); s != null; s = perr.readLine()) {
+            log.info(" " + s + "\n");
+        }
+        perr.close();
+        pout.close();
+        return isInProcess
+    }
+
 
     boolean uploadFileFromLinuxOSToSSHServer(String sourceFile, String destinationFile) {
         FileInputStream fis = null;
         try {
-            sourceFile=sourceFile.replace(" ","_")
+            sourceFile = sourceFile.replace(" ", "_")
             String localFile = sourceFile;
 
             String user = "elemental";
-            // arg[1]=arg[1].substring(arg[1].indexOf('@')+1);
             String host = "192.168.4.10";
             String remoteFile = destinationFile
 
@@ -52,7 +82,7 @@ class FileUploadService {
             channel.connect();
 
             if (checkAck(inFile) != 0) {
-                System.exit(0);
+                return false
             }
 
             File _lfile = new File(localFile);
@@ -111,12 +141,14 @@ class FileUploadService {
             System.out.println("session disconnected successfully")
 
         } catch (Exception e) {
-            System.out.println(e);
+            System.out.println("===========" + e.getMessage() + "==========");
             try {
                 if (fis != null)
                     fis.close();
             } catch (Exception ee) {
+                return false
             }
+            return false
         }
         return true
     }
